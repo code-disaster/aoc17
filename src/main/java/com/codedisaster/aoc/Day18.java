@@ -2,77 +2,86 @@ package com.codedisaster.aoc;
 
 import java.io.*;
 import java.util.*;
-import java.util.function.Function;
 
 public class Day18 {
 
+	@FunctionalInterface
+	interface OpCodeFn {
+		int apply(Program p, Program q, Instruction instr);
+	}
+
 	private enum OpCode {
 		snd(
-				instr -> {
-					sndPlayFreq = registers.get(instr.r).value;
+				(program, other, instr) -> {
+					long v = program.registers.get(instr.r).value;
+					other.queue.add(v);
+					program.sent++;
+					if (program.id == 1) {
+						System.out.println("program #" + program.id + " sent value #" + program.sent + ": " + v);
+					}
 					return 1;
 				}),
 		set(
-				instr -> {
-					Register r = registers.get(instr.r);
-					if (Instruction.isReg(instr.v)) {
-						r.value = registers.get(instr.v).value;
+				(program, other, instr) -> {
+					Register r = program.registers.get(instr.r);
+					if (program.isReg(instr.v)) {
+						r.value = program.registers.get(instr.v).value;
 					} else {
 						r.value = Integer.parseInt(instr.v);
 					}
 					return 1;
 				}),
 		add(
-				instr -> {
-					Register r = registers.get(instr.r);
-					if (Instruction.isReg(instr.v)) {
-						r.value += registers.get(instr.v).value;
+				(program, other, instr) -> {
+					Register r = program.registers.get(instr.r);
+					if (program.isReg(instr.v)) {
+						r.value += program.registers.get(instr.v).value;
 					} else {
 						r.value += Integer.parseInt(instr.v);
 					}
 					return 1;
 				}),
 		mul(
-				instr -> {
-					Register r = registers.get(instr.r);
-					if (Instruction.isReg(instr.v)) {
-						r.value *= registers.get(instr.v).value;
+				(program, other, instr) -> {
+					Register r = program.registers.get(instr.r);
+					if (program.isReg(instr.v)) {
+						r.value *= program.registers.get(instr.v).value;
 					} else {
 						r.value *= Integer.parseInt(instr.v);
 					}
 					return 1;
 				}),
 		mod(
-				instr -> {
-					Register r = registers.get(instr.r);
-					if (Instruction.isReg(instr.v)) {
-						r.value = r.value % registers.get(instr.v).value;
+				(program, other, instr) -> {
+					Register r = program.registers.get(instr.r);
+					if (program.isReg(instr.v)) {
+						r.value = r.value % program.registers.get(instr.v).value;
 					} else {
 						r.value = r.value % Integer.parseInt(instr.v);
 					}
 					return 1;
 				}),
 		rcv(
-				instr -> {
-					Register r = registers.get(instr.r);
-					if (r.value != 0) {
-						r.value = sndPlayFreq;
-						System.out.println("rcv: " + r.value);
+				(program, other, instr) -> {
+					if (program.queue.isEmpty()) {
+						return 0;
 					}
+					Register r = program.registers.get(instr.r);
+					r.value = program.queue.remove();
 					return 1;
 				}),
 		jgz(
-				instr -> {
+				(program, other, instr) -> {
 					long cmp;
 					long offs = 1;
-					if (Instruction.isReg(instr.r)) {
-						cmp = registers.get(instr.r).value;
+					if (program.isReg(instr.r)) {
+						cmp = program.registers.get(instr.r).value;
 					} else {
 						cmp = Integer.parseInt(instr.r);
 					}
 					if (cmp > 0) {
-						if (Instruction.isReg(instr.v)) {
-							offs = registers.get(instr.v).value;
+						if (program.isReg(instr.v)) {
+							offs = program.registers.get(instr.v).value;
 						} else {
 							offs = Integer.parseInt(instr.v);
 						}
@@ -80,14 +89,14 @@ public class Day18 {
 					return (int) offs;
 				});
 
-		private final Function<Instruction, Integer> fn;
+		private final OpCodeFn fn;
 
-		OpCode(Function<Instruction, Integer> fn) {
+		OpCode(OpCodeFn fn) {
 			this.fn = fn;
 		}
 
-		int run(Instruction instr) {
-			return fn.apply(instr);
+		int run(Program program, Program other, Instruction instr) {
+			return fn.apply(program, other, instr);
 		}
 	}
 
@@ -102,21 +111,55 @@ public class Day18 {
 			r = tokens[1];
 			v = tokens.length > 2 ? tokens[2] : null;
 		}
-
-		static boolean isReg(String token) {
-			return registers.containsKey(token);
-		}
 	}
 
 	private static class Register {
 
-		char name;
-		long value;
+		Register(int value) {
+			this.value = value;
+		}
 
+		long value;
 	}
 
-	private static List<Instruction> program = new ArrayList<>();
-	private static Map<String, Register> registers = new HashMap<>();
+	private static class Program {
+
+		final int id;
+		int ip;
+		Map<String, Register> registers = new HashMap<>();
+
+		Queue<Long> queue = new ArrayDeque<>();
+		int sent = 0;
+
+		Program(int id) {
+			this.id = id;
+			registers.put("a", new Register(0));
+			registers.put("b", new Register(0));
+			registers.put("f", new Register(0));
+			registers.put("i", new Register(0));
+			registers.put("p", new Register(id));
+		}
+
+		boolean tick(Program other) {
+
+			Instruction instr = code.get(ip);
+			int jmp = instr.op.run(this, other, instr);
+
+			ip += jmp;
+
+			if (ip < 0 || ip >= code.size()) {
+				return false;
+			}
+
+			return true;
+		}
+
+		boolean isReg(String token) {
+			return registers.containsKey(token);
+		}
+	}
+
+	private static List<Instruction> code = new ArrayList<>();
 
 	private static long sndPlayFreq;
 
@@ -135,30 +178,21 @@ public class Day18 {
 			}
 
 			String[] inputs = line.split(" ");
-			program.add(new Instruction(inputs));
+			code.add(new Instruction(inputs));
 		}
 
-		// registers
-		registers.put("a", new Register());
-		registers.put("b", new Register());
-		registers.put("f", new Register());
-		registers.put("i", new Register());
-		registers.put("p", new Register());
+		// programs
+		Program p0 = new Program(0);
+		Program p1 = new Program(1);
 
 		// part 1
-		{
-			int ip = 0;
+		for (; ; ) {
 
-			for (;;) {
+			boolean b0 = p0.tick(p1);
+			boolean b1 = p1.tick(p0);
 
-				Instruction instr = program.get(ip);
-				int jmp = instr.op.run(instr);
-
-				ip += jmp;
-
-				if (ip < 0 || ip >= program.size()) {
-					break;
-				}
+			if (!b0 || !b1) {
+				break;
 			}
 		}
 	}
